@@ -297,15 +297,27 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 
     destroy() {
         if (this._pollSource) {
-            GLib.Source.remove(this._pollSource);
+            try {
+                GLib.Source.remove(this._pollSource);
+            } catch {
+                // already removed
+            }
             this._pollSource = 0;
         }
         if (this._clearSource) {
-            GLib.Source.remove(this._clearSource);
+            try {
+                GLib.Source.remove(this._clearSource);
+            } catch {
+                // already removed
+            }
             this._clearSource = 0;
         }
         if (this._countdownSource) {
-            GLib.Source.remove(this._countdownSource);
+            try {
+                GLib.Source.remove(this._countdownSource);
+            } catch {
+                // already removed
+            }
             this._countdownSource = 0;
         }
         // Wipe sensitive state
@@ -403,7 +415,11 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 
     _cancelClear() {
         if (this._clearSource) {
-            GLib.Source.remove(this._clearSource);
+            try {
+                GLib.Source.remove(this._clearSource);
+            } catch {
+                // already removed
+            }
             this._clearSource = 0;
         }
         this._clearDeadline = 0;
@@ -492,17 +508,18 @@ export default class SecureClipboardExtension extends Extension {
      * @param {import('resource:///org/gnome/shell/ui/panelMenu.js').Button} indicator
      */
     _addToPanel(role, indicator) {
-        try {
-            Main.panel.addToStatusArea(role, indicator);
-        } catch {
-            // Orphan role from a previous failed enable/disable cycle
+        const existing = Main.panel.statusArea[role];
+        if (existing) {
             try {
-                Main.panel.statusArea[role]?.destroy();
+                existing.destroy();
             } catch {
                 // ignore
             }
-            Main.panel.addToStatusArea(role, indicator);
+            // GNOME keeps the role if destroy() aborted before super.destroy()
+            if (Main.panel.statusArea[role])
+                delete Main.panel.statusArea[role];
         }
+        Main.panel.addToStatusArea(role, indicator);
     }
 
     enable() {
