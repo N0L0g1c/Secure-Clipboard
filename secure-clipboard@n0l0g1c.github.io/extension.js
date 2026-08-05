@@ -63,11 +63,9 @@ function classify(text) {
     if (/-----BEGIN PGP PRIVATE KEY BLOCK-----/.test(t))
         return {secret: true, kind: 'pgp-key'};
 
-    // bare 64-char hex (optional 0x) — common for eth/private keys
     if (/^(?:0x)?[a-fA-F0-9]{64}$/.test(t))
         return {secret: true, kind: 'hex-key'};
 
-    // rough BIP39: 12–24 lowercase words
     const words = t.toLowerCase().split(/\s+/).filter(Boolean);
     if ([12, 15, 18, 21, 24].includes(words.length) &&
         words.every(w => /^[a-z]+$/.test(w) && w.length >= 3 && w.length <= 12))
@@ -91,7 +89,6 @@ function classify(text) {
     if (/^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(t))
         return {secret: true, kind: 'jwt'};
 
-    // long compact base64-looking blob
     if (t.length >= 80 && t.length <= 4096 &&
         /^[A-Za-z0-9+/=\s]+$/.test(t) &&
         (t.match(/[A-Za-z0-9+/=]/g) || []).length >= 64 &&
@@ -109,7 +106,7 @@ function classify(text) {
 
 function makePreview(text, secret, kind) {
     if (secret)
-        return `🔒 ${kind} (hidden · will auto-clear)`;
+        return `[secret] ${kind} (hidden)`;
     const one = text.replace(/\s+/g, ' ').trim();
     if (one.length <= 56)
         return one;
@@ -269,15 +266,17 @@ class SecureClipboardIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        for (const key of ['_pollSource', '_clearSource', '_countdownSource']) {
-            if (this[key]) {
-                try {
-                    GLib.Source.remove(this[key]);
-                } catch {
-                    // already gone
-                }
-                this[key] = 0;
-            }
+        if (this._pollSource) {
+            GLib.Source.remove(this._pollSource);
+            this._pollSource = 0;
+        }
+        if (this._clearSource) {
+            GLib.Source.remove(this._clearSource);
+            this._clearSource = 0;
+        }
+        if (this._countdownSource) {
+            GLib.Source.remove(this._countdownSource);
+            this._countdownSource = 0;
         }
         this._history = [];
         this._lastText = null;
@@ -312,7 +311,6 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         const entry = {
             id: this._nextId++,
             preview: makePreview(text, secret, kind),
-            // secrets never land in history text
             text: secret ? '' : text,
             secret,
             kind,
@@ -362,11 +360,7 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 
     _cancelClear() {
         if (this._clearSource) {
-            try {
-                GLib.Source.remove(this._clearSource);
-            } catch {
-                // already gone
-            }
+            GLib.Source.remove(this._clearSource);
             this._clearSource = 0;
         }
         this._clearDeadline = 0;
@@ -390,11 +384,7 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         if (!this._clipboard)
             return;
         this._clipboard.set_text(St.ClipboardType.CLIPBOARD, '');
-        try {
-            this._clipboard.set_text(St.ClipboardType.PRIMARY, '');
-        } catch {
-            // primary selection optional
-        }
+        this._clipboard.set_text(St.ClipboardType.PRIMARY, '');
         this._lastText = '';
         this._currentSecret = false;
         this._cancelClear();
@@ -438,28 +428,17 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 }
 
 export default class SecureClipboardExtension extends Extension {
-    _addToPanel(role, indicator) {
-        const existing = Main.panel.statusArea[role];
-        if (existing) {
-            try {
-                existing.destroy();
-            } catch {
-                // ignore
-            }
-            if (Main.panel.statusArea[role])
-                delete Main.panel.statusArea[role];
-        }
-        Main.panel.addToStatusArea(role, indicator);
-    }
 
     enable() {
         this._indicator = new SecureClipboardIndicator();
-        this._addToPanel(this.uuid, this._indicator);
+        Main.panel.addToStatusArea(this.uuid, this._indicator);
         this._indicator.start().catch(e => logError(e));
     }
 
     disable() {
-        this._indicator?.destroy();
-        this._indicator = null;
+        if (this._indicator) {
+            this._indicator.destroy();
+            this._indicator = null;
+        }
     }
 }
