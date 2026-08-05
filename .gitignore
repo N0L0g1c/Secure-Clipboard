@@ -1,0 +1,5 @@
+*.shell-extension.zip
+*.zip
+*~
+*.swp
+.DS_Store
