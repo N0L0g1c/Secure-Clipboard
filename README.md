@@ -2,6 +2,8 @@
 
 GNOME Shell extension: **secrets-aware clipboard** for the top panel — detect high-risk content, never store it, auto-clear after a timeout.
 
+![Screenshot](screenshots/screenshot.png)
+
 ## Features
 
 - Watches the clipboard (short poll interval)
@@ -15,7 +17,7 @@ GNOME Shell extension: **secrets-aware clipboard** for the top panel — detect 
 
 - GNOME Shell **45–50**
 
-## Install (local)
+## Install
 
 ```bash
 UUID=secure-clipboard@n0l0g1c.github.io
@@ -24,11 +26,11 @@ cp -a "$UUID" ~/.local/share/gnome-shell/extensions/
 gnome-extensions enable "$UUID"
 ```
 
-On Wayland, log out and back in so the shell discovers a newly copied UUID, then enable it.
+Log out/in on Wayland (or restart GNOME Shell) so the extension is discovered.
 
-## Clipboard access (EGO requirement)
+## Clipboard access
 
-This extension **reads the system clipboard** continuously while enabled in order to classify content. That access is declared in `metadata.json`.
+This extension **reads the system clipboard** while enabled in order to classify content. That access is declared in `metadata.json`.
 
 - Clipboard data is **never** sent to any network service
 - Secrets are **not** written to disk or to history text
@@ -49,28 +51,24 @@ Optional config: `~/.config/secure-clipboard/settings.json`
 - Heuristics can false-positive (for example long hex strings or word lists). Prefer auto-clear for safety.
 - This is not a full password manager and does not encrypt history.
 
-## Publish to extensions.gnome.org
+## Screenshots
 
-Follows the [EGO review guidelines](https://gjs.guide/extensions/review-guidelines/review-guidelines.html):
-
-| Requirement | How this extension complies |
+| File | Contents |
 |---|---|
-| GPL-compatible license | GPL-2.0-or-later (`LICENSE`) |
-| Clipboard disclosure | Declared in description |
-| No sharing clipboard with third parties | Local only |
-| No default clipboard shortcuts | None shipped |
-| Lifecycle | Timers and history cleared in `disable()` |
-| No telemetry | None |
-| Zip contents | Runtime files only (`./pack.sh`) |
+| [`screenshots/screenshot.png`](screenshots/screenshot.png) | Primary store image — secret detected, countdown |
+| [`screenshots/screenshot-history.png`](screenshots/screenshot-history.png) | Non-secret history |
+| [`screenshots/icon.png`](screenshots/icon.png) | Optional icon asset |
 
-### Package for upload
+## Packaging
 
 ```bash
 ./pack.sh
-# produces: secure-clipboard@n0l0g1c.github.io.shell-extension.zip
+# → secure-clipboard@n0l0g1c.github.io.shell-extension.zip
 ```
 
-Upload at [extensions.gnome.org](https://extensions.gnome.org/).
+Zip contents: `metadata.json`, `extension.js`, `stylesheet.css`, `LICENSE`.
+
+This project follows the [GNOME Shell extension review guidelines](https://gjs.guide/extensions/review-guidelines/review-guidelines.html) (clipboard access disclosed, no third-party clipboard sharing, no default clipboard shortcuts, lifecycle cleanup, GPL-2.0-or-later).
 
 ## Development
 
