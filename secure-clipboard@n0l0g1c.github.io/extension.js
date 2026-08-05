@@ -223,13 +223,13 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         this._statusItem.label.add_style_class_name('sc-status');
         this.menu.addMenuItem(this._statusItem);
 
-        this._countdownItem = new PopupMenu.PopupMenuItem('', {
+        this._countdownItem = new PopupMenu.PopupMenuItem(' ', {
             reactive: false,
             can_focus: false,
         });
         this._countdownItem.label.add_style_class_name('sc-countdown sc-danger');
         this.menu.addMenuItem(this._countdownItem);
-        this._countdownItem.actor.visible = false;
+        this._countdownItem.visible = false;
 
         this.menu.addMenuItem(new PopupMenu.PopupSeparatorMenuItem());
 
@@ -392,7 +392,7 @@ class SecureClipboardIndicator extends PanelMenu.Button {
     _scheduleClear(ms) {
         this._cancelClear();
         this._clearDeadline = Date.now() + ms;
-        this._countdownItem.actor.visible = true;
+        this._countdownItem.visible = true;
         this._updateCountdown();
         this._clearSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, ms, () => {
             this._clearSource = 0;
@@ -407,17 +407,17 @@ class SecureClipboardIndicator extends PanelMenu.Button {
             this._clearSource = 0;
         }
         this._clearDeadline = 0;
-        this._countdownItem.actor.visible = false;
-        this._countdownItem.label.text = '';
+        this._countdownItem.visible = false;
+        this._countdownItem.label.text = ' ';
     }
 
     _updateCountdown() {
         if (!this._clearDeadline) {
-            this._countdownItem.actor.visible = false;
+            this._countdownItem.visible = false;
             return;
         }
         const left = Math.max(0, Math.ceil((this._clearDeadline - Date.now()) / 1000));
-        this._countdownItem.actor.visible = true;
+        this._countdownItem.visible = true;
         this._countdownItem.label.text = `Clearing secret in ${left}s…`;
         if (left <= 0 && this._currentSecret) {
             // timer should fire; keep UI honest
@@ -487,9 +487,27 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 }
 
 export default class SecureClipboardExtension extends Extension {
+    /**
+     * @param {string} role
+     * @param {import('resource:///org/gnome/shell/ui/panelMenu.js').Button} indicator
+     */
+    _addToPanel(role, indicator) {
+        try {
+            Main.panel.addToStatusArea(role, indicator);
+        } catch {
+            // Orphan role from a previous failed enable/disable cycle
+            try {
+                Main.panel.statusArea[role]?.destroy();
+            } catch {
+                // ignore
+            }
+            Main.panel.addToStatusArea(role, indicator);
+        }
+    }
+
     enable() {
         this._indicator = new SecureClipboardIndicator();
-        Main.panel.addToStatusArea(this.uuid, this._indicator);
+        this._addToPanel(this.uuid, this._indicator);
         this._indicator.start();
     }
 
