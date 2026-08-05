@@ -13,23 +13,23 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import * as PanelMenu from 'resource:///org/gnome/shell/ui/panelMenu.js';
 import * as PopupMenu from 'resource:///org/gnome/shell/ui/popupMenu.js';
 
+Gio._promisify(Gio.File.prototype, 'load_contents_async', 'load_contents_finish');
+
 const POLL_MS = 500;
 const MAX_HISTORY = 20;
-const SECRET_CLEAR_MS = 30 * 1000;
 const CONFIG_DIR = 'secure-clipboard';
 const CONFIG_FILE = 'settings.json';
 
-/** @typedef {{id: number, preview: string, text: string, secret: boolean, kind: string, at: number}} ClipEntry */
-
-/**
- * @returns {{autoClearSecrets: boolean, clearSeconds: number, maxHistory: number}}
- */
-function loadConfig() {
-    const defaults = {
+function defaultConfig() {
+    return {
         autoClearSecrets: true,
         clearSeconds: 30,
         maxHistory: MAX_HISTORY,
     };
+}
+
+async function loadConfig() {
+    const defaults = defaultConfig();
     try {
         const path = GLib.build_filenamev([
             GLib.get_user_config_dir(),
@@ -39,7 +39,7 @@ function loadConfig() {
         const file = Gio.File.new_for_path(path);
         if (!file.query_exists(null))
             return defaults;
-        const [, bytes] = file.load_contents(null);
+        const [, bytes] = await file.load_contents_async(null);
         const data = JSON.parse(new TextDecoder().decode(bytes));
         return {
             autoClearSecrets: data.autoClearSecrets !== false,
@@ -47,89 +47,66 @@ function loadConfig() {
             maxHistory: Math.max(5, Math.min(50, Number(data.maxHistory) || MAX_HISTORY)),
         };
     } catch {
-        return {
-            autoClearSecrets: true,
-            clearSeconds: 30,
-            maxHistory: MAX_HISTORY,
-        };
+        return defaults;
     }
 }
 
-/**
- * @param {string} text
- * @returns {{secret: boolean, kind: string}}
- */
 function classify(text) {
     if (!text)
         return {secret: false, kind: 'empty'};
 
     const t = text.trim();
 
-    // PEM private keys
     if (/-----BEGIN (?:RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----/.test(t))
         return {secret: true, kind: 'private-key'};
 
-    // PGP private key block
     if (/-----BEGIN PGP PRIVATE KEY BLOCK-----/.test(t))
         return {secret: true, kind: 'pgp-key'};
 
-    // Ethereum / general hex private keys (64 hex, optional 0x)
+    // bare 64-char hex (optional 0x) — common for eth/private keys
     if (/^(?:0x)?[a-fA-F0-9]{64}$/.test(t))
         return {secret: true, kind: 'hex-key'};
 
-    // BIP39-ish: 12/15/18/21/24 lowercase words
+    // rough BIP39: 12–24 lowercase words
     const words = t.toLowerCase().split(/\s+/).filter(Boolean);
     if ([12, 15, 18, 21, 24].includes(words.length) &&
         words.every(w => /^[a-z]+$/.test(w) && w.length >= 3 && w.length <= 12))
         return {secret: true, kind: 'seed-phrase'};
 
-    // AWS-style access key id + secret patterns (secret only when long random)
     if (/\bAKIA[0-9A-Z]{16}\b/.test(t))
         return {secret: true, kind: 'aws-key-id'};
     if (/\b(?:aws)?_?secret_?access_?key\b\s*[:=]\s*\S{20,}/i.test(t))
         return {secret: true, kind: 'aws-secret'};
 
-    // GitHub / GitLab style tokens
     if (/\bghp_[A-Za-z0-9]{20,}\b/.test(t) ||
         /\bgithub_pat_[A-Za-z0-9_]{20,}\b/.test(t) ||
         /\bglpat-[A-Za-z0-9\-_]{20,}\b/.test(t))
         return {secret: true, kind: 'api-token'};
 
-    // Slack / Stripe-ish
     if (/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/.test(t) ||
         /\bsk_live_[A-Za-z0-9]{20,}\b/.test(t) ||
         /\bsk-[A-Za-z0-9]{32,}\b/.test(t))
         return {secret: true, kind: 'api-token'};
 
-    // JWT (three base64url segments)
     if (/^eyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(t))
         return {secret: true, kind: 'jwt'};
 
-    // Long base64 blob that looks like key material
+    // long compact base64-looking blob
     if (t.length >= 80 && t.length <= 4096 &&
         /^[A-Za-z0-9+/=\s]+$/.test(t) &&
         (t.match(/[A-Za-z0-9+/=]/g) || []).length >= 64 &&
         !/\s{2,}/.test(t.slice(0, 40))) {
-        // only flag if no spaces (compact) or single line
         if (!/\s/.test(t) || t.split(/\s+/).length <= 3)
             return {secret: true, kind: 'base64-secret'};
     }
 
-    // password= / secret= assignments
     if (/\b(?:password|passwd|pwd|secret|token|api[_-]?key)\s*[:=]\s*\S{8,}/i.test(t) &&
         t.length < 500)
         return {secret: true, kind: 'credential'};
 
-    // Monero spend/view key-ish (64 hex already caught); xmr: seed word lists handled above
-
     return {secret: false, kind: 'text'};
 }
 
-/**
- * @param {string} text
- * @param {boolean} secret
- * @param {string} kind
- */
 function makePreview(text, secret, kind) {
     if (secret)
         return `🔒 ${kind} (hidden · will auto-clear)`;
@@ -144,10 +121,6 @@ class HistoryRow extends PopupMenu.PopupBaseMenuItem {
         GObject.registerClass(this);
     }
 
-    /**
-     * @param {ClipEntry} entry
-     * @param {(e: ClipEntry) => void} onActivate
-     */
     constructor(entry, onActivate) {
         super({
             reactive: !entry.secret,
@@ -171,9 +144,8 @@ class HistoryRow extends PopupMenu.PopupBaseMenuItem {
         });
         this.add_child(age);
 
-        if (!entry.secret) {
+        if (!entry.secret)
             this.connect('activate', () => onActivate(entry));
-        }
     }
 }
 
@@ -204,8 +176,7 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 
         this.add_child(box);
 
-        this._cfg = loadConfig();
-        /** @type {ClipEntry[]} */
+        this._cfg = defaultConfig();
         this._history = [];
         this._lastText = null;
         this._nextId = 1;
@@ -284,7 +255,9 @@ class SecureClipboardIndicator extends PanelMenu.Button {
             : 'Auto-clear secrets: OFF';
     }
 
-    start() {
+    async start() {
+        this._cfg = await loadConfig();
+        this._toggleClearItem.label.text = this._toggleClearLabel();
         this._pollSource = GLib.timeout_add(GLib.PRIORITY_DEFAULT, POLL_MS, () => {
             this._pollClipboard();
             return GLib.SOURCE_CONTINUE;
@@ -296,31 +269,16 @@ class SecureClipboardIndicator extends PanelMenu.Button {
     }
 
     destroy() {
-        if (this._pollSource) {
-            try {
-                GLib.Source.remove(this._pollSource);
-            } catch {
-                // already removed
+        for (const key of ['_pollSource', '_clearSource', '_countdownSource']) {
+            if (this[key]) {
+                try {
+                    GLib.Source.remove(this[key]);
+                } catch {
+                    // already gone
+                }
+                this[key] = 0;
             }
-            this._pollSource = 0;
         }
-        if (this._clearSource) {
-            try {
-                GLib.Source.remove(this._clearSource);
-            } catch {
-                // already removed
-            }
-            this._clearSource = 0;
-        }
-        if (this._countdownSource) {
-            try {
-                GLib.Source.remove(this._countdownSource);
-            } catch {
-                // already removed
-            }
-            this._countdownSource = 0;
-        }
-        // Wipe sensitive state
         this._history = [];
         this._lastText = null;
         this._clipboard = null;
@@ -339,13 +297,9 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         });
     }
 
-    /**
-     * @param {string} text
-     */
     _onNewClipboard(text) {
         this._lastText = text;
 
-        // Ignore empty / whitespace-only (e.g. after we clear the clipboard)
         if (!text || !text.trim()) {
             this._currentSecret = false;
             this._cancelClear();
@@ -355,20 +309,17 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         const {secret, kind} = classify(text);
         this._currentSecret = secret;
 
-        /** @type {ClipEntry} */
         const entry = {
             id: this._nextId++,
             preview: makePreview(text, secret, kind),
-            // Never retain secret payload in history
+            // secrets never land in history text
             text: secret ? '' : text,
             secret,
             kind,
             at: Date.now(),
         };
 
-        // Only push non-secrets, or a redacted placeholder once per secret type
         if (secret) {
-            // Replace any previous secret placeholder; keep one warning row
             this._history = this._history.filter(h => !h.secret);
             this._history.unshift(entry);
             this._panelLabel.text = 'SECRET';
@@ -390,7 +341,6 @@ class SecureClipboardIndicator extends PanelMenu.Button {
             this._panelLabel.style_class = 'sc-panel-label sc-ok';
             this._panelIcon.icon_name = 'edit-paste-symbolic';
             this._statusItem.label.text = `Captured · ${kind}`;
-            // Non-secret: cancel any pending secret clear timer only if content changed away
             this._cancelClear();
             this._currentSecret = false;
         }
@@ -398,9 +348,6 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         this._rebuildHistory();
     }
 
-    /**
-     * @param {number} ms
-     */
     _scheduleClear(ms) {
         this._cancelClear();
         this._clearDeadline = Date.now() + ms;
@@ -418,7 +365,7 @@ class SecureClipboardIndicator extends PanelMenu.Button {
             try {
                 GLib.Source.remove(this._clearSource);
             } catch {
-                // already removed
+                // already gone
             }
             this._clearSource = 0;
         }
@@ -435,24 +382,18 @@ class SecureClipboardIndicator extends PanelMenu.Button {
         const left = Math.max(0, Math.ceil((this._clearDeadline - Date.now()) / 1000));
         this._countdownItem.visible = true;
         this._countdownItem.label.text = `Clearing secret in ${left}s…`;
-        if (left <= 0 && this._currentSecret) {
-            // timer should fire; keep UI honest
+        if (left <= 0 && this._currentSecret)
             this._countdownItem.label.text = 'Clearing…';
-        }
     }
 
-    /**
-     * @param {'auto'|'manual'} reason
-     */
     _clearClipboard(reason) {
         if (!this._clipboard)
             return;
         this._clipboard.set_text(St.ClipboardType.CLIPBOARD, '');
-        // Also clear primary selection (middle-click paste)
         try {
             this._clipboard.set_text(St.ClipboardType.PRIMARY, '');
         } catch {
-            // ignore
+            // primary selection optional
         }
         this._lastText = '';
         this._currentSecret = false;
@@ -464,13 +405,11 @@ class SecureClipboardIndicator extends PanelMenu.Button {
             ? 'Secret auto-cleared from clipboard'
             : 'Clipboard cleared';
 
-        // Drop secret placeholders from history after clear
         this._history = this._history.filter(h => !h.secret);
         this._rebuildHistory();
 
-        if (reason === 'auto') {
+        if (reason === 'auto')
             Main.notify('Secure Clipboard', 'Sensitive clipboard content cleared');
-        }
     }
 
     _rebuildHistory() {
@@ -484,14 +423,10 @@ class SecureClipboardIndicator extends PanelMenu.Button {
             this._listSection.addMenuItem(empty);
             return;
         }
-        for (const entry of this._history) {
+        for (const entry of this._history)
             this._listSection.addMenuItem(new HistoryRow(entry, e => this._recopy(e)));
-        }
     }
 
-    /**
-     * @param {ClipEntry} entry
-     */
     _recopy(entry) {
         if (entry.secret || !entry.text)
             return;
@@ -503,10 +438,6 @@ class SecureClipboardIndicator extends PanelMenu.Button {
 }
 
 export default class SecureClipboardExtension extends Extension {
-    /**
-     * @param {string} role
-     * @param {import('resource:///org/gnome/shell/ui/panelMenu.js').Button} indicator
-     */
     _addToPanel(role, indicator) {
         const existing = Main.panel.statusArea[role];
         if (existing) {
@@ -515,7 +446,6 @@ export default class SecureClipboardExtension extends Extension {
             } catch {
                 // ignore
             }
-            // GNOME keeps the role if destroy() aborted before super.destroy()
             if (Main.panel.statusArea[role])
                 delete Main.panel.statusArea[role];
         }
@@ -525,7 +455,7 @@ export default class SecureClipboardExtension extends Extension {
     enable() {
         this._indicator = new SecureClipboardIndicator();
         this._addToPanel(this.uuid, this._indicator);
-        this._indicator.start();
+        this._indicator.start().catch(e => logError(e));
     }
 
     disable() {
