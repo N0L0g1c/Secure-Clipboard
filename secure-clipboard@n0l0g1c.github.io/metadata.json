@@ -1,14 +1,7 @@
 {
   "uuid": "secure-clipboard@n0l0g1c.github.io",
   "name": "Secure Clipboard",
-  "description": "Secrets-aware clipboard helper for the top panel.\n\nClipboard access: this extension reads the system clipboard to detect high-risk patterns (private keys, seed phrases, API tokens, long hex secrets, JWTs, and similar). Matching secrets are never stored in history. With auto-clear enabled (default), the clipboard and primary selection are cleared after a short timeout. Non-secret clips may be kept in a short in-memory history until the extension is disabled or the session ends.\n\nClipboard data is never sent to any network service. No telemetry.",
-  "shell-version": [
-    "45",
-    "46",
-    "47",
-    "48",
-    "49",
-    "50"
-  ],
+  "description": "Watches the clipboard for secrets (keys, seeds, tokens). Secrets are not kept in history and can auto-clear after a timeout. Reads the system clipboard while enabled; nothing is sent over the network.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
   "url": "https://github.com/N0L0g1c/Secure-Clipboard"
 }
